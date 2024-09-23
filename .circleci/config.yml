@@ -31,7 +31,7 @@ jobs:
           name: Run Python Script
           command: |
             . venv/bin/activate  # Activate the virtual environment
-            python daily_shuffle.py
+            python DailyShuffle.py
 
 workflows:
   version: 2
