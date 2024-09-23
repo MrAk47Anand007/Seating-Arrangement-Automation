@@ -84,67 +84,104 @@ for exclusion in exclusion_names:
         if exclusion in data_dict and exclusion in people:
             room_assignments[room].append(exclusion)
 
-# Prepare Adaptive Card for Microsoft Teams
+# Create the adaptive card table with title and formatted table rows
 adaptive_card = {
-    "type": "message",
-    "attachments": [
+    "type": "AdaptiveCard",
+    "body": [
         {
-            "contentType": "application/vnd.microsoft.card.adaptive",
-            "content": {
-                "type": "AdaptiveCard",
-                "version": "1.2",
-                "body": [
-                    {
-                        "type": "TextBlock",
-                        "text": f"Seating Arrangements for Today ({os.popen('date +%d-%m-%Y').read().strip()})",
-                        "weight": "Bolder",
-                        "size": "Large"
-                    },
-                    {
-                        "type": "ColumnSet",
-                        "columns": [
-                            {
-                                "type": "Column",
-                                "width": "auto",
-                                "items": [{"type": "TextBlock", "text": "Room No", "weight": "Bolder"}]
-                            },
-                            {
-                                "type": "Column",
-                                "width": "stretch",
-                                "items": [{"type": "TextBlock", "text": "Names", "weight": "Bolder"}]
-                            }
-                        ]
-                    }
-                ]
-            }
+            "type": "TextBlock",
+            "text": f"Seating Arrangements for Today ({today})",
+            "weight": "Bolder",
+            "size": "Medium"
+        },
+        {
+            "type": "Table",
+            "columns": [
+                {
+                    "type": "TableColumn",
+                    "width": "stretch"
+                },
+                {
+                    "type": "TableColumn",
+                    "width": "stretch"
+                }
+            ],
+            "rows": [
+                {
+                    "type": "TableRow",
+                    "cells": [
+                        {
+                            "type": "TableCell",
+                            "items": [
+                                {
+                                    "type": "TextBlock",
+                                    "text": "Room No.",
+                                    "weight": "Bolder",
+                                    "wrap": True
+                                }
+                            ]
+                        },
+                        {
+                            "type": "TableCell",
+                            "items": [
+                                {
+                                    "type": "TextBlock",
+                                    "text": "Names",
+                                    "weight": "Bolder",
+                                    "wrap": True
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
         }
-    ]
+    ],
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "version": "1.3"
 }
 
-# Add room assignments to the adaptive card
+# Add room and employee names to the table with text wrapping enabled
 for room, people in room_assignments.items():
-    row = {
-        "type": "ColumnSet",
-        "columns": [
-            {
-                "type": "Column",
-                "width": "auto",
-                "items": [{"type": "TextBlock", "text": room}]
-            },
-            {
-                "type": "Column",
-                "width": "stretch",
-                "items": [{"type": "TextBlock", "text": ", ".join(people)}]
-            }
-        ]
-    }
-    adaptive_card['attachments'][0]['content']['body'].append(row)
+    adaptive_card["body"][1]["rows"].append(
+        {
+            "type": "TableRow",
+            "cells": [
+                {
+                    "type": "TableCell",
+                    "items": [
+                        {
+                            "type": "TextBlock",
+                            "text": room,
+                            "wrap": True
+                        }
+                    ]
+                },
+                {
+                    "type": "TableCell",
+                    "items": [
+                        {
+                            "type": "TextBlock",
+                            "text": ", ".join(people),
+                            "wrap": True
+                        }
+                    ]
+                }
+            ]
+        }
+    )
 
-# Send POST request to the webhook URL
-response = requests.post(webhook_url, json=adaptive_card)
+# Headers for the HTTP POST request
+headers = {
+    'Content-Type': 'application/json'
+}
 
-# Check for successful response
+
+# Send the adaptive card payload to the webhook
+response = requests.post(webhook_url, headers=headers, data=json.dumps(adaptive_card))
+
+# Check if the request was successful
 if response.status_code == 200 or 202:
-    print("Seating arrangements posted successfully!")
+    print("Message posted successfully!")
 else:
-    print(f"Failed to post seating arrangements: {response.status_code}, {response.text}")
+    print(f"Failed to post message. Status code: {response.status_code}, Response: {response.text}")
