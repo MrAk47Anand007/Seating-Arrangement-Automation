@@ -9,6 +9,7 @@ from collections import defaultdict
 webhook_url = os.getenv('WEBHOOK_URL')
 google_json = os.getenv('GoogleJson')
 
+
 # Step 2: Create a temporary file for the Google service account credentials
 google_credentials_path = os.path.expanduser('~/repo/emailserver-415706-bae70316794d.json')
 with open(google_credentials_path, 'w') as f:
