@@ -1,31 +1,40 @@
-# Use the latest 2.1 version of CircleCI pipeline process engine.
-# See: https://circleci.com/docs/configuration-reference
 version: 2.1
 
-# Define a job to be invoked later in a workflow.
-# See: https://circleci.com/docs/jobs-steps/#jobs-overview & https://circleci.com/docs/configuration-reference/#jobs
-jobs:
-  say-hello:
-    # Specify the execution environment. You can specify an image from Docker Hub or use one of our convenience images from CircleCI's Developer Hub.
-    # See: https://circleci.com/docs/executor-intro/ & https://circleci.com/docs/configuration-reference/#executor-job
+executors:
+  python-executor:
     docker:
-      # Specify the version you desire here
-      # See: https://circleci.com/developer/images/image/cimg/base
-      - image: cimg/base:current
+      - image: circleci/python:3.9  # Use Python 3.9 image (or adjust based on your needs)
+    working_directory: ~/repo
 
-    # Add steps to the job
-    # See: https://circleci.com/docs/jobs-steps/#steps-overview & https://circleci.com/docs/configuration-reference/#steps
+jobs:
+  run-seating-script:
+    executor: python-executor
     steps:
-      # Checkout the code as the first step.
-      - checkout
-      - run:
-          name: "Say hello"
-          command: "echo Hello, World!"
+      - checkout  # Check out the code from your repository
 
-# Orchestrate jobs using workflows
-# See: https://circleci.com/docs/workflows/ & https://circleci.com/docs/configuration-reference/#workflows
+      # Install dependencies
+      - run:
+          name: Install Dependencies
+          command: |
+            python -m venv venv  # Create a virtual environment
+            . venv/bin/activate  # Activate the virtual environment
+            pip install -r requirements.txt  # Install requirements from requirements.txt
+
+      # Add your Google Service Account JSON as an environment variable or a file
+      - run:
+          name: Create Google Service Account File
+          command: |
+            echo "$GOOGLE_SERVICE_ACCOUNT_JSON" > ~/repo/emailserver-415706-bae70316794d.json
+
+      # Set the webhook URL as an environment variable
+      - run:
+          name: Run Python Script
+          command: |
+            . venv/bin/activate  # Activate the virtual environment
+            python daily_shuffle.py
+
 workflows:
-  say-hello-workflow: # This is the name of the workflow, feel free to change it to better match your workflow.
-    # Inside the workflow, you define the jobs you want to run.
+  version: 2
+  run-script-workflow:
     jobs:
-      - say-hello
+      - run-seating-script
