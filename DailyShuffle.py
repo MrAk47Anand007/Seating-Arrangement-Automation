@@ -1,22 +1,25 @@
 import gspread
 import random
+import os
 import requests
-import json
 from collections import defaultdict
-from datetime import datetime
 
-# Authenticate using the service account
-service_acc = gspread.service_account("C:\\Users\\Admin\\Downloads\\emailserver-415706-bae70316794d.json")
+# Step 1: Get the webhook URL and Google Service Account credentials from environment variables
+webhook_url = os.getenv('WEBHOOK_URL')
+google_service_account_path = os.path.expanduser('~/repo/emailserver-415706-bae70316794d.json')
+
+# Authenticate using the Google service account JSON file path
+service_acc = gspread.service_account(google_service_account_path)
 
 # Open the spreadsheet by its key
 spreadsheet_emp = service_acc.open_by_key('1oCXrqaPi8IiqWZQux3vmZKpeb2oftSLcURMlLz2D_jY')
 
-# Select the worksheet by its name
+# Select the worksheets by their names
 worksheet_emp = spreadsheet_emp.worksheet("Emp_Names")
 worksheet_seat = spreadsheet_emp.worksheet("Seat_Capacity")
 worksheet_exclusion = spreadsheet_emp.worksheet("Exclusion")
 
-# Fetch the data from ranges
+# Fetch the data from the spreadsheets
 emp_data = worksheet_emp.get("A2:B19")
 seat_avail = worksheet_seat.get("A1:B4")
 exclusion_list = worksheet_exclusion.get_all_records()
@@ -28,23 +31,22 @@ seat_dict = {row[0]: int(row[1]) for row in seat_avail[1:] if len(row) == 2}
 # Convert exclusion data to a list of names
 exclusion_names = [entry['Name'] for entry in exclusion_list]
 
-# Group employees by project
+# Step 3: Group employees by project
 project_groups = defaultdict(list)
 misc_people = []
 for name, project in data_dict.items():
     if name not in exclusion_names:
         if "Miscellaneous" in project:
-            misc_people.append(name)  # Collect Misc people separately
+            misc_people.append(name)
         else:
             project_groups[project].append(name)
 
-# Assign rooms based on seat availability
+# Step 4: Assign rooms based on seat availability
 room_assignments = {}
 assigned_people = set()
 
 # Assign project groups first
 for room, seat_count in seat_dict.items():
-    # Shuffle the project groups to avoid bias
     projects = list(project_groups.items())
     random.shuffle(projects)
 
@@ -56,10 +58,9 @@ for room, seat_count in seat_dict.items():
             room_assignments[room].extend(people)
             remaining_seats -= len(people)
             assigned_people.update(people)
-            # Clear the assigned people from the project group
             project_groups[project] = []
 
-# Shuffle and assign misc people into rooms with available space
+# Step 5: Shuffle and assign misc people into rooms with available space
 misc_people = [person for person in misc_people if person not in assigned_people]
 random.shuffle(misc_people)
 
@@ -70,120 +71,73 @@ for room, people in room_assignments.items():
         room_assignments[room].extend(to_assign)
         misc_people = misc_people[remaining_seats:]
 
-# Handle exclusions (no changes for these people)
+# Step 6: Handle exclusions (no changes for these people)
 for exclusion in exclusion_names:
     for room, people in room_assignments.items():
         if exclusion in data_dict and exclusion in people:
             room_assignments[room].append(exclusion)
 
-# Get today's date in dd-mm-yyyy format
-today = datetime.now().strftime("%d-%m-%Y")
-
-# Create the adaptive card table with title and formatted table rows
+# Prepare Adaptive Card for Microsoft Teams
 adaptive_card = {
-    "type": "AdaptiveCard",
-    "body": [
+    "type": "message",
+    "attachments": [
         {
-            "type": "TextBlock",
-            "text": f"Seating Arrangements for Today ({today})",
-            "weight": "Bolder",
-            "size": "Medium"
-        },
-        {
-            "type": "Table",
-            "columns": [
-                {
-                    "type": "TableColumn",
-                    "width": "stretch"
-                },
-                {
-                    "type": "TableColumn",
-                    "width": "stretch"
-                }
-            ],
-            "rows": [
-                {
-                    "type": "TableRow",
-                    "cells": [
-                        {
-                            "type": "TableCell",
-                            "items": [
-                                {
-                                    "type": "TextBlock",
-                                    "text": "Room No.",
-                                    "weight": "Bolder",
-                                    "wrap": True
-                                }
-                            ]
-                        },
-                        {
-                            "type": "TableCell",
-                            "items": [
-                                {
-                                    "type": "TextBlock",
-                                    "text": "Names",
-                                    "weight": "Bolder",
-                                    "wrap": True
-                                }
-                            ]
-                        }
-                    ]
-                }
-            ]
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "content": {
+                "type": "AdaptiveCard",
+                "version": "1.2",
+                "body": [
+                    {
+                        "type": "TextBlock",
+                        "text": f"Seating Arrangements for Today ({os.popen('date +%d-%m-%Y').read().strip()})",
+                        "weight": "Bolder",
+                        "size": "Large"
+                    },
+                    {
+                        "type": "ColumnSet",
+                        "columns": [
+                            {
+                                "type": "Column",
+                                "width": "auto",
+                                "items": [{"type": "TextBlock", "text": "Room No", "weight": "Bolder"}]
+                            },
+                            {
+                                "type": "Column",
+                                "width": "stretch",
+                                "items": [{"type": "TextBlock", "text": "Names", "weight": "Bolder"}]
+                            }
+                        ]
+                    }
+                ]
+            }
         }
-    ],
-    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-    "version": "1.3"
+    ]
 }
 
-# Add room and employee names to the table with text wrapping enabled
+# Add room assignments to the adaptive card
 for room, people in room_assignments.items():
-    adaptive_card["body"][1]["rows"].append(
-        {
-            "type": "TableRow",
-            "cells": [
-                {
-                    "type": "TableCell",
-                    "items": [
-                        {
-                            "type": "TextBlock",
-                            "text": room,
-                            "wrap": True
-                        }
-                    ]
-                },
-                {
-                    "type": "TableCell",
-                    "items": [
-                        {
-                            "type": "TextBlock",
-                            "text": ", ".join(people),
-                            "wrap": True
-                        }
-                    ]
-                }
-            ]
-        }
-    )
+    row = {
+        "type": "ColumnSet",
+        "columns": [
+            {
+                "type": "Column",
+                "width": "auto",
+                "items": [{"type": "TextBlock", "text": room}]
+            },
+            {
+                "type": "Column",
+                "width": "stretch",
+                "items": [{"type": "TextBlock", "text": ", ".join(people)}]
+            }
+        ]
+    }
+    adaptive_card['attachments'][0]['content']['body'].append(row)
 
-# Webhook URL
-webhook_url = "https://prod-14.centralindia.logic.azure.com:443/workflows/b6d09061f77f4bc183e8d6fe86b24516/triggers/manual/paths/invoke?api-version=2016-06-01&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=QvQF6ywHd2Dv_AyPjXb4PgAGiDTdki1s4I7_ocG_FI8"
+# Send POST request to the webhook URL
+response = requests.post(webhook_url, json=adaptive_card)
 
-# Headers for the HTTP POST request
-headers = {
-    'Content-Type': 'application/json'
-}
-
-# Send the adaptive card payload to the webhook
-response = requests.post(webhook_url, headers=headers, data=json.dumps(adaptive_card))
-
-# Check if the request was successful
-if response.status_code == 200 or 202:
-    print("Message posted successfully!")
+# Check for successful response
+if response.status_code == 200:
+    print("Seating arrangements posted successfully!")
 else:
-    print(f"Failed to post message. Status code: {response.status_code}, Response: {response.text}")
-
-# Print the room assignments
-print("Room Assignments:")
-for room, people in room_assignments.items():
-    print(f"Room {room}: {people}")
+    print(f"Failed to post seating arrangements: {response.status_code}, {response.text}")
