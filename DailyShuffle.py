@@ -1,14 +1,21 @@
 import gspread
 import random
 import os
+import json
 import requests
 from collections import defaultdict
 
-# Step 1: Get the webhook URL and Google Service Account credentials from environment variables
+# Step 1: Get the webhook URL and Google Service Account JSON from environment variables
 webhook_url = os.getenv('WEBHOOK_URL')
+google_json = os.getenv('GoogleJson')
 
-# Authenticate using the Google service account JSON file path
-service_acc = gspread.service_account("emailserver-415706-bae70316794d.json")
+# Step 2: Create a temporary file for the Google service account credentials
+google_credentials_path = os.path.expanduser('~/repo/emailserver-415706-bae70316794d.json')
+with open(google_credentials_path, 'w') as f:
+    f.write(google_json)
+
+# Step 3: Authenticate using the Google service account JSON file
+service_acc = gspread.service_account(google_credentials_path)
 
 # Open the spreadsheet by its key
 spreadsheet_emp = service_acc.open_by_key('1oCXrqaPi8IiqWZQux3vmZKpeb2oftSLcURMlLz2D_jY')
@@ -30,7 +37,7 @@ seat_dict = {row[0]: int(row[1]) for row in seat_avail[1:] if len(row) == 2}
 # Convert exclusion data to a list of names
 exclusion_names = [entry['Name'] for entry in exclusion_list]
 
-# Step 3: Group employees by project
+# Step 4: Group employees by project
 project_groups = defaultdict(list)
 misc_people = []
 for name, project in data_dict.items():
@@ -40,7 +47,7 @@ for name, project in data_dict.items():
         else:
             project_groups[project].append(name)
 
-# Step 4: Assign rooms based on seat availability
+# Step 5: Assign rooms based on seat availability
 room_assignments = {}
 assigned_people = set()
 
@@ -59,7 +66,7 @@ for room, seat_count in seat_dict.items():
             assigned_people.update(people)
             project_groups[project] = []
 
-# Step 5: Shuffle and assign misc people into rooms with available space
+# Step 6: Shuffle and assign misc people into rooms with available space
 misc_people = [person for person in misc_people if person not in assigned_people]
 random.shuffle(misc_people)
 
@@ -70,7 +77,7 @@ for room, people in room_assignments.items():
         room_assignments[room].extend(to_assign)
         misc_people = misc_people[remaining_seats:]
 
-# Step 6: Handle exclusions (no changes for these people)
+# Handle exclusions (no changes for these people)
 for exclusion in exclusion_names:
     for room, people in room_assignments.items():
         if exclusion in data_dict and exclusion in people:
@@ -136,7 +143,7 @@ for room, people in room_assignments.items():
 response = requests.post(webhook_url, json=adaptive_card)
 
 # Check for successful response
-if response.status_code == 200:
+if response.status_code == 200 or 202:
     print("Seating arrangements posted successfully!")
 else:
     print(f"Failed to post seating arrangements: {response.status_code}, {response.text}")
