@@ -6,10 +6,9 @@ from collections import defaultdict
 
 # Step 1: Get the webhook URL and Google Service Account credentials from environment variables
 webhook_url = os.getenv('WEBHOOK_URL')
-google_service_account_path = os.path.expanduser('~/repo/emailserver-415706-bae70316794d.json')
 
 # Authenticate using the Google service account JSON file path
-service_acc = gspread.service_account(google_service_account_path)
+service_acc = gspread.service_account("emailserver-415706-bae70316794d.json")
 
 # Open the spreadsheet by its key
 spreadsheet_emp = service_acc.open_by_key('1oCXrqaPi8IiqWZQux3vmZKpeb2oftSLcURMlLz2D_jY')
