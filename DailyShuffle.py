@@ -4,7 +4,7 @@ import os
 import json
 import requests
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Step 1: Get the webhook URL and Google Service Account JSON from environment variables
 webhook_url = os.getenv('WEBHOOK_URL')
@@ -85,8 +85,9 @@ for exclusion in exclusion_names:
         if exclusion in data_dict and exclusion in people:
             room_assignments[room].append(exclusion)
 
-# Get today's date in dd-mm-yyyy format
-today = datetime.now().strftime("%d-%m-%Y")
+# Get today's date in dd-mm-yyyy format adjusted for IST (UTC+5:30)
+ist_offset = timedelta(hours=5, minutes=30)
+today = (datetime.utcnow() + ist_offset).strftime("%d-%m-%Y")
 
 # Create the adaptive card table with title and formatted table rows
 adaptive_card = {
