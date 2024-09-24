@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 webhook_url = os.getenv('WEBHOOK_URL')
 google_json = os.getenv('GoogleJson')
 
+
 # Step 2: Create a temporary file for the Google service account credentials
 google_credentials_path = os.path.expanduser('~/repo/emailserver-415706-bae70316794d.json')
 with open(google_credentials_path, 'w') as f:
@@ -88,41 +89,53 @@ for exclusion in exclusion_names:
 ist_offset = timedelta(hours=5, minutes=30)
 today = (datetime.utcnow() + ist_offset).strftime("%d-%m-%Y")
 
-# Create the adaptive card with improved mobile compatibility
-adaptive_card = {
+adaptive_card_table = {
     "type": "AdaptiveCard",
-    "msteams": {
-        "width": "full"
-    },
     "body": [
         {
             "type": "TextBlock",
             "text": f"Seating Arrangements for Today ({today})",
             "weight": "Bolder",
-            "size": "Medium"
+            "size": "Medium",
+            "wrap": True
         },
         {
-            "type": "ColumnSet",
+            "type": "Table",
             "columns": [
                 {
-                    "type": "Column",
-                    "items": [
-                        {
-                            "type": "TextBlock",
-                            "text": "Room No.",
-                            "weight": "Bolder",
-                            "wrap": True
-                        }
-                    ]
+                    "type": "TableColumn",
+                    "width": "stretch"
                 },
                 {
-                    "type": "Column",
-                    "items": [
+                    "type": "TableColumn",
+                    "width": "stretch"
+                }
+            ],
+            "rows": [
+                {
+                    "type": "TableRow",
+                    "cells": [
                         {
-                            "type": "TextBlock",
-                            "text": "Names",
-                            "weight": "Bolder",
-                            "wrap": True
+                            "type": "TableCell",
+                            "items": [
+                                {
+                                    "type": "TextBlock",
+                                    "text": "Room No.",
+                                    "weight": "Bolder",
+                                    "wrap": True
+                                }
+                            ]
+                        },
+                        {
+                            "type": "TableCell",
+                            "items": [
+                                {
+                                    "type": "TextBlock",
+                                    "text": "Names",
+                                    "weight": "Bolder",
+                                    "wrap": True
+                                }
+                            ]
                         }
                     ]
                 }
@@ -130,17 +143,17 @@ adaptive_card = {
         }
     ],
     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-    "version": "1.2"
+    "version": "1.3"
 }
 
-# Add room and employee names to the card
+# Adding rows with room and employee names
 for room, people in room_assignments.items():
-    adaptive_card["body"].append(
+    adaptive_card_table["body"][1]["rows"].append(
         {
-            "type": "ColumnSet",
-            "columns": [
+            "type": "TableRow",
+            "cells": [
                 {
-                    "type": "Column",
+                    "type": "TableCell",
                     "items": [
                         {
                             "type": "TextBlock",
@@ -150,7 +163,7 @@ for room, people in room_assignments.items():
                     ]
                 },
                 {
-                    "type": "Column",
+                    "type": "TableCell",
                     "items": [
                         {
                             "type": "TextBlock",
@@ -163,13 +176,12 @@ for room, people in room_assignments.items():
         }
     )
 
-# Headers for the HTTP POST request
+# Step 10: Send Adaptive Card to Webhook
 headers = {
     'Content-Type': 'application/json'
 }
 
-# Send the adaptive card payload to the webhook
-response = requests.post(webhook_url, headers=headers, data=json.dumps(adaptive_card))
+response = requests.post(webhook_url, headers=headers, data=json.dumps(adaptive_card_table))
 
 # Check if the request was successful
 if response.status_code == 200 or 202:
