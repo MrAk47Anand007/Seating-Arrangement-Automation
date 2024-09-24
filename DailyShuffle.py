@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 webhook_url = os.getenv('WEBHOOK_URL')
 google_json = os.getenv('GoogleJson')
 
-
 # Step 2: Create a temporary file for the Google service account credentials
 google_credentials_path = os.path.expanduser('~/repo/emailserver-415706-bae70316794d.json')
 with open(google_credentials_path, 'w') as f:
@@ -89,9 +88,12 @@ for exclusion in exclusion_names:
 ist_offset = timedelta(hours=5, minutes=30)
 today = (datetime.utcnow() + ist_offset).strftime("%d-%m-%Y")
 
-# Create the adaptive card table with title and formatted table rows
+# Create the adaptive card with improved mobile compatibility
 adaptive_card = {
     "type": "AdaptiveCard",
+    "msteams": {
+        "width": "full"
+    },
     "body": [
         {
             "type": "TextBlock",
@@ -100,42 +102,27 @@ adaptive_card = {
             "size": "Medium"
         },
         {
-            "type": "Table",
+            "type": "ColumnSet",
             "columns": [
                 {
-                    "type": "TableColumn",
-                    "width": "stretch"
+                    "type": "Column",
+                    "items": [
+                        {
+                            "type": "TextBlock",
+                            "text": "Room No.",
+                            "weight": "Bolder",
+                            "wrap": True
+                        }
+                    ]
                 },
                 {
-                    "type": "TableColumn",
-                    "width": "stretch"
-                }
-            ],
-            "rows": [
-                {
-                    "type": "TableRow",
-                    "cells": [
+                    "type": "Column",
+                    "items": [
                         {
-                            "type": "TableCell",
-                            "items": [
-                                {
-                                    "type": "TextBlock",
-                                    "text": "Room No.",
-                                    "weight": "Bolder",
-                                    "wrap": True
-                                }
-                            ]
-                        },
-                        {
-                            "type": "TableCell",
-                            "items": [
-                                {
-                                    "type": "TextBlock",
-                                    "text": "Names",
-                                    "weight": "Bolder",
-                                    "wrap": True
-                                }
-                            ]
+                            "type": "TextBlock",
+                            "text": "Names",
+                            "weight": "Bolder",
+                            "wrap": True
                         }
                     ]
                 }
@@ -143,17 +130,17 @@ adaptive_card = {
         }
     ],
     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-    "version": "1.3"
+    "version": "1.2"
 }
 
-# Add room and employee names to the table with text wrapping enabled
+# Add room and employee names to the card
 for room, people in room_assignments.items():
-    adaptive_card["body"][1]["rows"].append(
+    adaptive_card["body"].append(
         {
-            "type": "TableRow",
-            "cells": [
+            "type": "ColumnSet",
+            "columns": [
                 {
-                    "type": "TableCell",
+                    "type": "Column",
                     "items": [
                         {
                             "type": "TextBlock",
@@ -163,7 +150,7 @@ for room, people in room_assignments.items():
                     ]
                 },
                 {
-                    "type": "TableCell",
+                    "type": "Column",
                     "items": [
                         {
                             "type": "TextBlock",
@@ -180,7 +167,6 @@ for room, people in room_assignments.items():
 headers = {
     'Content-Type': 'application/json'
 }
-
 
 # Send the adaptive card payload to the webhook
 response = requests.post(webhook_url, headers=headers, data=json.dumps(adaptive_card))
