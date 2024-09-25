@@ -3,6 +3,7 @@ import random
 import os
 import json
 import requests
+import heapq
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -48,65 +49,86 @@ for name, project in data_dict.items():
         else:
             project_groups[project].append(name)
 
-# Shuffle the people in each project group
-for project, people in project_groups.items():
-    random.shuffle(people)
-
 # Step 5: Assign rooms based on seat availability
 room_assignments = {}
 assigned_people = set()
 
-# Shuffle the project groups randomly for each room assignment
-projects = list(project_groups.items())
-random.shuffle(projects)
+# Priority queue (smallest group assigned first)
+project_heap = []
+for project, people in project_groups.items():
+    if people:
+        heapq.heappush(project_heap, (len(people), project))
 
-# Assign people from project groups to rooms
 for room, seat_count in seat_dict.items():
     room_assignments[room] = []
     remaining_seats = seat_count
 
-    for project, people in projects:
-        if len(people) <= remaining_seats:
-            # Assign the people to the room and remove them from the project group
-            assigned_people.update(people)
-            room_assignments[room].extend(people)
-            remaining_seats -= len(people)
-            project_groups[project] = []  # Clear the group once assigned
-        else:
-            # Assign as many people as possible from this project and then stop
-            to_assign = people[:remaining_seats]
-            assigned_people.update(to_assign)
-            room_assignments[room].extend(to_assign)
-            project_groups[project] = people[remaining_seats:]  # Keep unassigned people for the next room
-            break  # Move to the next room
+    while project_heap and remaining_seats > 0:
+        group_size, project = heapq.heappop(project_heap)
 
-# Step 6: Assign Miscellaneous people (randomly) to available rooms
+        if group_size <= remaining_seats:
+            room_assignments[room].extend(project_groups[project])
+            remaining_seats -= group_size
+            assigned_people.update(project_groups[project])
+        else:
+            room_assignments[room].extend(project_groups[project][:remaining_seats])
+            assigned_people.update(project_groups[project][:remaining_seats])
+            project_groups[project] = project_groups[project][remaining_seats:]
+            heapq.heappush(project_heap, (len(project_groups[project]), project))
+            remaining_seats = 0
+
+# Step 6: Shuffle and assign miscellaneous people into rooms with available space
+misc_people = [person for person in misc_people if person not in assigned_people]
 random.shuffle(misc_people)
+
 for room, people in room_assignments.items():
     remaining_seats = seat_dict[room] - len(people)
     if remaining_seats > 0 and misc_people:
         to_assign = misc_people[:remaining_seats]
         room_assignments[room].extend(to_assign)
-        misc_people = misc_people[remaining_seats:]  # Remove the assigned people from misc list
+        misc_people = misc_people[remaining_seats:]
 
-# Step 7: Write the assignments to the "Today's Arrangement" sheet
+# Step 7: Create or open the 'Today's Arrangement' sheet
 arrangement_sheet_name = "Today's Arrangement"
+
 try:
+    # Try to load yesterday's arrangement from the "Today's Arrangement" sheet
     worksheet_today = spreadsheet_emp.worksheet(arrangement_sheet_name)
-    worksheet_today.clear()  # Clear the old arrangement
+    yesterday_data = worksheet_today.get_all_records()
+
+    # Convert yesterday's data into a dictionary for easy lookup
+    yesterday_assignments = {entry['Room No.']: entry['Names'].split(', ') for entry in yesterday_data}
+
+    # Step 8: Apply the seating algorithm to avoid repetition from yesterday
+    for room, people in room_assignments.items():
+        previous_people = set(yesterday_assignments.get(room, []))
+        new_people = [p for p in people if p not in previous_people]
+        remaining_people = [p for p in people if p in previous_people]
+
+        # Shuffle the remaining people if necessary to avoid complete repetition
+        if len(new_people) == 0 and remaining_people:
+            random.shuffle(remaining_people)
+            room_assignments[room] = remaining_people
+        else:
+            room_assignments[room] = new_people + remaining_people
+
 except gspread.exceptions.WorksheetNotFound:
+    # First day case: No previous data, so generate from scratch
     worksheet_today = spreadsheet_emp.add_worksheet(title=arrangement_sheet_name, rows="100", cols="10")
 
+# Step 9: Write today's arrangement to the "Today's Arrangement" sheet
 arrangement_data = [["Room No.", "Names"]]
 for room, people in room_assignments.items():
     arrangement_data.append([room, ", ".join(people)])
 
+# Overwrite or update the existing "Today's Arrangement" sheet
 worksheet_today.update("A1", arrangement_data)
 
-# Step 8: Prepare Adaptive Card for Microsoft Teams
+# Get today's date in dd-mm-yyyy format adjusted for IST (UTC+5:30)
 ist_offset = timedelta(hours=5, minutes=30)
 today = (datetime.utcnow() + ist_offset).strftime("%d-%m-%Y")
 
+# Step 10: Prepare the Adaptive Card for Teams notification
 adaptive_card_table = {
     "type": "AdaptiveCard",
     "body": [
@@ -162,7 +184,7 @@ adaptive_card_table = {
     ]
 }
 
-# Adding rows with room and employee names to the card
+# Adding rows with room and employee names
 for room, people in room_assignments.items():
     adaptive_card_table["body"][1]["rows"].append(
         {
@@ -184,7 +206,8 @@ for room, people in room_assignments.items():
                         {
                             "type": "TextBlock",
                             "text": ", ".join(people),
-                            "wrap": True
+                            "wrap": True,
+                            "horizontalAlignment": "Left"
                         }
                     ]
                 }
@@ -192,8 +215,11 @@ for room, people in room_assignments.items():
         }
     )
 
-# Step 9: Send Adaptive Card to Webhook
-headers = {'Content-Type': 'application/json'}
+# Step 11: Send Adaptive Card to Webhook
+headers = {
+    'Content-Type': 'application/json'
+}
+
 response = requests.post(webhook_url, headers=headers, data=json.dumps(adaptive_card_table))
 
 # Check if the request was successful
