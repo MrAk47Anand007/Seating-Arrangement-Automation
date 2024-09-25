@@ -1,10 +1,18 @@
 import gspread
 import random
 import json
-import os
 import requests
+import os
 from collections import defaultdict
 from datetime import datetime, timedelta
+
+# Function to create a worksheet if it doesn't exist
+def get_or_create_worksheet(spreadsheet, title, rows=100, cols=20):
+    try:
+        return spreadsheet.worksheet(title)
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"Worksheet '{title}' not found. Creating a new worksheet.")
+        return spreadsheet.add_worksheet(title=title, rows=rows, cols=cols)
 
 # Step 1: Get the webhook URL and Google Service Account JSON from environment variables
 webhook_url = os.getenv('WEBHOOK_URL')
