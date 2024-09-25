@@ -40,75 +40,76 @@ exclusion_names = [entry['Name'] for entry in exclusion_list]
 
 # Step 4: Group employees by project
 project_groups = defaultdict(list)
+misc_people = []
 for name, project in data_dict.items():
     if name not in exclusion_names:
-        project_groups[project].append(name)
+        if "Miscellaneous" in project:
+            misc_people.append(name)
+        else:
+            project_groups[project].append(name)
 
-# Step 5: Shuffle projects and assign rooms
-room_assignments = {room: [] for room in seat_dict.keys()}
-projects = list(project_groups.keys())
+# Add Miscellaneous people as one "project" (for shuffling and random distribution)
+if misc_people:
+    project_groups['Miscellaneous'] = misc_people
+
+# Step 5: Assign rooms based on seat availability
+room_assignments = {}
+assigned_people = set()
+
+# Shuffle the project groups randomly
+projects = list(project_groups.items())
 random.shuffle(projects)
 
-for project in projects:
-    people = project_groups[project]
-    random.shuffle(people)
-    
-    # Find the room with the most available space
-    target_room = max(room_assignments, key=lambda x: seat_dict[x] - len(room_assignments[x]))
-    
-    # Calculate how many people we can fit in this room
-    available_space = seat_dict[target_room] - len(room_assignments[target_room])
-    people_to_assign = min(len(people), available_space)
-    
-    # Assign people to the room
-    room_assignments[target_room].extend(people[:people_to_assign])
-    
-    # If there are remaining people, try to keep them together in another room
-    remaining_people = people[people_to_assign:]
-    while remaining_people:
-        target_room = max(room_assignments, key=lambda x: seat_dict[x] - len(room_assignments[x]))
-        available_space = seat_dict[target_room] - len(room_assignments[target_room])
-        people_to_assign = min(len(remaining_people), available_space)
-        room_assignments[target_room].extend(remaining_people[:people_to_assign])
-        remaining_people = remaining_people[people_to_assign:]
+# Assign project groups to rooms in a random order
+for room, seat_count in seat_dict.items():
+    room_assignments[room] = []
+    remaining_seats = seat_count
 
-# Step 6: Create or open the 'Today's Arrangement' sheet
+    for project, people in projects:
+        if len(people) <= remaining_seats:
+            room_assignments[room].extend(people)
+            remaining_seats -= len(people)
+            assigned_people.update(people)
+            project_groups[project] = []
+
+# Step 6: Shuffle and assign remaining miscellaneous people
+misc_people = [person for person in project_groups['Miscellaneous'] if person not in assigned_people]
+random.shuffle(misc_people)
+
+# Randomly distribute miscellaneous people across rooms with available space
+for room, people in room_assignments.items():
+    remaining_seats = seat_dict[room] - len(people)
+    if remaining_seats > 0 and misc_people:
+        to_assign = misc_people[:remaining_seats]
+        room_assignments[room].extend(to_assign)
+        misc_people = misc_people[remaining_seats:]
+
+# Step 7: Create or open the 'Today's Arrangement' sheet
 arrangement_sheet_name = "Today's Arrangement"
 
 try:
-    # Try to load yesterday's arrangement
+    # Try to load yesterday's arrangement from the "Today's Arrangement" sheet
     worksheet_today = spreadsheet_emp.worksheet(arrangement_sheet_name)
     yesterday_data = worksheet_today.get_all_records()
-    
+
     # Convert yesterday's data into a dictionary for easy lookup
-    yesterday_assignments = {room: set(names.split(', ')) for room, names in 
-                             [(entry['Room No.'], entry['Names']) for entry in yesterday_data]}
-    
-    # Step 7: Apply the seating algorithm to avoid repetition from yesterday
+    yesterday_assignments = {entry['Room No.']: entry['Names'].split(', ') for entry in yesterday_data}
+
+    # Step 8: Apply the seating algorithm to avoid repetition from yesterday
     for room, people in room_assignments.items():
-        if room in yesterday_assignments:
-            # Find people who were in this room yesterday
-            repeat_people = set(people) & yesterday_assignments[room]
-            if repeat_people:
-                # Try to swap these people with those in other rooms
-                for other_room, other_people in room_assignments.items():
-                    if other_room != room:
-                        for person in repeat_people.copy():
-                            if person in people:  # Check if person is still in the current room
-                                for other_person in other_people:
-                                    if other_person not in yesterday_assignments.get(other_room, set()):
-                                        # Swap
-                                        people[people.index(person)] = other_person
-                                        other_people[other_people.index(other_person)] = person
-                                        repeat_people.remove(person)
-                                        break
-                            if not repeat_people:
-                                break
-                    if not repeat_people:
-                        break
+        previous_people = set(yesterday_assignments.get(room, []))
+        new_people = [p for p in people if p not in previous_people]
+        remaining_people = [p for p in people if p in previous_people]
+
+        # Shuffle the remaining people if necessary to avoid complete repetition
+        if len(new_people) == 0 and remaining_people:
+            random.shuffle(remaining_people)
+            room_assignments[room] = remaining_people
+        else:
+            room_assignments[room] = new_people + remaining_people
 
 except gspread.exceptions.WorksheetNotFound:
-    # First day case: No previous data, so keep the current assignments
+    # First day case: No previous data, so generate from scratch
     worksheet_today = spreadsheet_emp.add_worksheet(title=arrangement_sheet_name, rows="100", cols="10")
 
 # Step 9: Write today's arrangement to the "Today's Arrangement" sheet
@@ -123,7 +124,7 @@ worksheet_today.update("A1", arrangement_data)
 ist_offset = timedelta(hours=5, minutes=30)
 today = (datetime.utcnow() + ist_offset).strftime("%d-%m-%Y")
 
-# Step 10: Prepare the Adaptive Card for Teams notification
+# Prepare Adaptive Card for Microsoft Teams
 adaptive_card_table = {
     "type": "AdaptiveCard",
     "body": [
@@ -179,7 +180,7 @@ adaptive_card_table = {
     ]
 }
 
-# Adding rows with room and employee names
+# Adding rows with room and employee names to the card
 for room, people in room_assignments.items():
     adaptive_card_table["body"][1]["rows"].append(
         {
@@ -201,8 +202,7 @@ for room, people in room_assignments.items():
                         {
                             "type": "TextBlock",
                             "text": ", ".join(people),
-                            "wrap": True,
-                            "horizontalAlignment": "Left"
+                            "wrap": True
                         }
                     ]
                 }
@@ -210,11 +210,8 @@ for room, people in room_assignments.items():
         }
     )
 
-# Step 11: Send Adaptive Card to Webhook
-headers = {
-    'Content-Type': 'application/json'
-}
-
+# Step 10: Send Adaptive Card to Webhook
+headers = {'Content-Type': 'application/json'}
 response = requests.post(webhook_url, headers=headers, data=json.dumps(adaptive_card_table))
 
 # Check if the request was successful
