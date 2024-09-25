@@ -40,47 +40,39 @@ exclusion_names = [entry['Name'] for entry in exclusion_list]
 
 # Step 4: Group employees by project
 project_groups = defaultdict(list)
-all_people = []
 for name, project in data_dict.items():
     if name not in exclusion_names:
         project_groups[project].append(name)
-        all_people.append(name)
 
-# Step 5: Shuffle all people and assign rooms
-random.shuffle(all_people)
+# Step 5: Shuffle projects and assign rooms
 room_assignments = {room: [] for room in seat_dict.keys()}
+projects = list(project_groups.keys())
+random.shuffle(projects)
 
-person_index = 0
-while person_index < len(all_people):
-    for room, capacity in seat_dict.items():
-        if len(room_assignments[room]) < capacity and person_index < len(all_people):
-            room_assignments[room].append(all_people[person_index])
-            person_index += 1
-
-# Step 6: Try to keep project members together if possible
-for room, people in room_assignments.items():
-    project_counts = defaultdict(int)
-    for person in people:
-        project = data_dict[person]
-        project_counts[project] += 1
+for project in projects:
+    people = project_groups[project]
+    random.shuffle(people)
     
-    # If there's a dominant project in the room, try to swap others out
-    if project_counts:
-        dominant_project = max(project_counts, key=project_counts.get)
-        if project_counts[dominant_project] > len(people) / 2:
-            for i, person in enumerate(people):
-                if data_dict[person] != dominant_project:
-                    for other_room, other_people in room_assignments.items():
-                        if other_room != room:
-                            for j, other_person in enumerate(other_people):
-                                if data_dict[other_person] == dominant_project:
-                                    # Swap
-                                    room_assignments[room][i], room_assignments[other_room][j] = room_assignments[other_room][j], room_assignments[room][i]
-                                    break
-                    if data_dict[room_assignments[room][i]] == dominant_project:
-                        break
+    # Find the room with the most available space
+    target_room = max(room_assignments, key=lambda x: seat_dict[x] - len(room_assignments[x]))
+    
+    # Calculate how many people we can fit in this room
+    available_space = seat_dict[target_room] - len(room_assignments[target_room])
+    people_to_assign = min(len(people), available_space)
+    
+    # Assign people to the room
+    room_assignments[target_room].extend(people[:people_to_assign])
+    
+    # If there are remaining people, try to keep them together in another room
+    remaining_people = people[people_to_assign:]
+    while remaining_people:
+        target_room = max(room_assignments, key=lambda x: seat_dict[x] - len(room_assignments[x]))
+        available_space = seat_dict[target_room] - len(room_assignments[target_room])
+        people_to_assign = min(len(remaining_people), available_space)
+        room_assignments[target_room].extend(remaining_people[:people_to_assign])
+        remaining_people = remaining_people[people_to_assign:]
 
-# Step 7: Create or open the 'Today's Arrangement' sheet
+# Step 6: Create or open the 'Today's Arrangement' sheet
 arrangement_sheet_name = "Today's Arrangement"
 
 try:
@@ -88,29 +80,32 @@ try:
     worksheet_today = spreadsheet_emp.worksheet(arrangement_sheet_name)
     yesterday_data = worksheet_today.get_all_records()
     
-    # Convert yesterday's data into a set for easy lookup
-    yesterday_assignments = {(entry['Room No.'], name) for entry in yesterday_data for name in entry['Names'].split(', ')}
+    # Convert yesterday's data into a dictionary for easy lookup
+    yesterday_assignments = {room: set(names.split(', ')) for room, names in 
+                             [(entry['Room No.'], entry['Names']) for entry in yesterday_data]}
     
-    # Step 8: Apply the seating algorithm to avoid repetition from yesterday
+    # Step 7: Apply the seating algorithm to avoid repetition from yesterday
     for room, people in room_assignments.items():
-        new_assignment = []
-        for person in people:
-            if (room, person) in yesterday_assignments:
-                # Try to move this person to another room
+        if room in yesterday_assignments:
+            # Find people who were in this room yesterday
+            repeat_people = set(people) & yesterday_assignments[room]
+            if repeat_people:
+                # Try to swap these people with those in other rooms
                 for other_room, other_people in room_assignments.items():
-                    if other_room != room and len(other_people) > 0:
-                        swap_candidate = random.choice(other_people)
-                        if (other_room, swap_candidate) not in yesterday_assignments:
-                            other_people.remove(swap_candidate)
-                            other_people.append(person)
-                            new_assignment.append(swap_candidate)
-                            break
-                else:
-                    # If no swap was possible, keep the person in the same room
-                    new_assignment.append(person)
-            else:
-                new_assignment.append(person)
-        room_assignments[room] = new_assignment
+                    if other_room != room:
+                        for person in repeat_people.copy():
+                            if person in people:  # Check if person is still in the current room
+                                for other_person in other_people:
+                                    if other_person not in yesterday_assignments.get(other_room, set()):
+                                        # Swap
+                                        people[people.index(person)] = other_person
+                                        other_people[other_people.index(other_person)] = person
+                                        repeat_people.remove(person)
+                                        break
+                            if not repeat_people:
+                                break
+                    if not repeat_people:
+                        break
 
 except gspread.exceptions.WorksheetNotFound:
     # First day case: No previous data, so keep the current assignments
