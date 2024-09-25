@@ -48,10 +48,6 @@ for name, project in data_dict.items():
         else:
             project_groups[project].append(name)
 
-# Add Miscellaneous people as one "project" (for shuffling and random distribution)
-if misc_people:
-    project_groups['Miscellaneous'] = misc_people
-
 # Step 5: Assign rooms based on seat availability
 room_assignments = {}
 assigned_people = set()
@@ -60,31 +56,7 @@ assigned_people = set()
 projects = list(project_groups.items())
 random.shuffle(projects)
 
-# Assign project groups to rooms in a random order
-for room, seat_count in seat_dict.items():
-    room_assignments[room] = []
-    remaining_seats = seat_count
-
-    for project, people in projects:
-        if len(people) <= remaining_seats:
-            room_assignments[room].extend(people)
-            remaining_seats -= len(people)
-            assigned_people.update(people)
-            project_groups[project] = []
-
-# Step 6: Shuffle and assign remaining miscellaneous people
-misc_people = [person for person in project_groups['Miscellaneous'] if person not in assigned_people]
-random.shuffle(misc_people)
-
-# Randomly distribute miscellaneous people across rooms with available space
-for room, people in room_assignments.items():
-    remaining_seats = seat_dict[room] - len(people)
-    if remaining_seats > 0 and misc_people:
-        to_assign = misc_people[:remaining_seats]
-        room_assignments[room].extend(to_assign)
-        misc_people = misc_people[remaining_seats:]
-
-# Step 7: Create or open the 'Today's Arrangement' sheet
+# Step 6: Attempt to avoid repetition by checking yesterday's arrangement
 arrangement_sheet_name = "Today's Arrangement"
 
 try:
@@ -95,22 +67,34 @@ try:
     # Convert yesterday's data into a dictionary for easy lookup
     yesterday_assignments = {entry['Room No.']: entry['Names'].split(', ') for entry in yesterday_data}
 
-    # Step 8: Apply the seating algorithm to avoid repetition from yesterday
-    for room, people in room_assignments.items():
-        previous_people = set(yesterday_assignments.get(room, []))
-        new_people = [p for p in people if p not in previous_people]
-        remaining_people = [p for p in people if p in previous_people]
+    # Step 7: Apply seating algorithm to avoid repetition
+    for room, seat_count in seat_dict.items():
+        remaining_seats = seat_count
+        room_assignments[room] = []
 
-        # Shuffle the remaining people if necessary to avoid complete repetition
-        if len(new_people) == 0 and remaining_people:
-            random.shuffle(remaining_people)
-            room_assignments[room] = remaining_people
-        else:
-            room_assignments[room] = new_people + remaining_people
+        for project, people in projects:
+            new_people = [p for p in people if p not in yesterday_assignments.get(room, [])]
+            if len(new_people) > remaining_seats:
+                new_people = new_people[:remaining_seats]
+
+            room_assignments[room].extend(new_people)
+            assigned_people.update(new_people)
+            remaining_seats -= len(new_people)
 
 except gspread.exceptions.WorksheetNotFound:
     # First day case: No previous data, so generate from scratch
     worksheet_today = spreadsheet_emp.add_worksheet(title=arrangement_sheet_name, rows="100", cols="10")
+
+# Step 8: Shuffle and assign remaining miscellaneous people
+misc_people = [person for person in misc_people if person not in assigned_people]
+random.shuffle(misc_people)
+
+for room, people in room_assignments.items():
+    remaining_seats = seat_dict[room] - len(people)
+    if remaining_seats > 0 and misc_people:
+        to_assign = misc_people[:remaining_seats]
+        room_assignments[room].extend(to_assign)
+        misc_people = misc_people[remaining_seats:]
 
 # Step 9: Write today's arrangement to the "Today's Arrangement" sheet
 arrangement_data = [["Room No.", "Names"]]
