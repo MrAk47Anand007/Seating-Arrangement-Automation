@@ -3,7 +3,6 @@ import random
 import os
 import json
 import requests
-import heapq
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -41,79 +40,80 @@ exclusion_names = [entry['Name'] for entry in exclusion_list]
 
 # Step 4: Group employees by project
 project_groups = defaultdict(list)
-misc_people = []
+all_people = []
 for name, project in data_dict.items():
     if name not in exclusion_names:
-        if "Miscellaneous" in project:
-            misc_people.append(name)
-        else:
-            project_groups[project].append(name)
+        project_groups[project].append(name)
+        all_people.append(name)
 
-# Step 5: Assign rooms based on seat availability
-room_assignments = {}
-assigned_people = set()
+# Step 5: Shuffle all people and assign rooms
+random.shuffle(all_people)
+room_assignments = {room: [] for room in seat_dict.keys()}
 
-# Priority queue (smallest group assigned first)
-project_heap = []
-for project, people in project_groups.items():
-    if people:
-        heapq.heappush(project_heap, (len(people), project))
+person_index = 0
+while person_index < len(all_people):
+    for room, capacity in seat_dict.items():
+        if len(room_assignments[room]) < capacity and person_index < len(all_people):
+            room_assignments[room].append(all_people[person_index])
+            person_index += 1
 
-for room, seat_count in seat_dict.items():
-    room_assignments[room] = []
-    remaining_seats = seat_count
-
-    while project_heap and remaining_seats > 0:
-        group_size, project = heapq.heappop(project_heap)
-
-        if group_size <= remaining_seats:
-            room_assignments[room].extend(project_groups[project])
-            remaining_seats -= group_size
-            assigned_people.update(project_groups[project])
-        else:
-            room_assignments[room].extend(project_groups[project][:remaining_seats])
-            assigned_people.update(project_groups[project][:remaining_seats])
-            project_groups[project] = project_groups[project][remaining_seats:]
-            heapq.heappush(project_heap, (len(project_groups[project]), project))
-            remaining_seats = 0
-
-# Step 6: Shuffle and assign miscellaneous people into rooms with available space
-misc_people = [person for person in misc_people if person not in assigned_people]
-random.shuffle(misc_people)
-
+# Step 6: Try to keep project members together if possible
 for room, people in room_assignments.items():
-    remaining_seats = seat_dict[room] - len(people)
-    if remaining_seats > 0 and misc_people:
-        to_assign = misc_people[:remaining_seats]
-        room_assignments[room].extend(to_assign)
-        misc_people = misc_people[remaining_seats:]
+    project_counts = defaultdict(int)
+    for person in people:
+        project = data_dict[person]
+        project_counts[project] += 1
+    
+    # If there's a dominant project in the room, try to swap others out
+    if project_counts:
+        dominant_project = max(project_counts, key=project_counts.get)
+        if project_counts[dominant_project] > len(people) / 2:
+            for i, person in enumerate(people):
+                if data_dict[person] != dominant_project:
+                    for other_room, other_people in room_assignments.items():
+                        if other_room != room:
+                            for j, other_person in enumerate(other_people):
+                                if data_dict[other_person] == dominant_project:
+                                    # Swap
+                                    room_assignments[room][i], room_assignments[other_room][j] = room_assignments[other_room][j], room_assignments[room][i]
+                                    break
+                    if data_dict[room_assignments[room][i]] == dominant_project:
+                        break
 
 # Step 7: Create or open the 'Today's Arrangement' sheet
 arrangement_sheet_name = "Today's Arrangement"
 
 try:
-    # Try to load yesterday's arrangement from the "Today's Arrangement" sheet
+    # Try to load yesterday's arrangement
     worksheet_today = spreadsheet_emp.worksheet(arrangement_sheet_name)
     yesterday_data = worksheet_today.get_all_records()
-
-    # Convert yesterday's data into a dictionary for easy lookup
-    yesterday_assignments = {entry['Room No.']: entry['Names'].split(', ') for entry in yesterday_data}
-
+    
+    # Convert yesterday's data into a set for easy lookup
+    yesterday_assignments = {(entry['Room No.'], name) for entry in yesterday_data for name in entry['Names'].split(', ')}
+    
     # Step 8: Apply the seating algorithm to avoid repetition from yesterday
     for room, people in room_assignments.items():
-        previous_people = set(yesterday_assignments.get(room, []))
-        new_people = [p for p in people if p not in previous_people]
-        remaining_people = [p for p in people if p in previous_people]
-
-        # Shuffle the remaining people if necessary to avoid complete repetition
-        if len(new_people) == 0 and remaining_people:
-            random.shuffle(remaining_people)
-            room_assignments[room] = remaining_people
-        else:
-            room_assignments[room] = new_people + remaining_people
+        new_assignment = []
+        for person in people:
+            if (room, person) in yesterday_assignments:
+                # Try to move this person to another room
+                for other_room, other_people in room_assignments.items():
+                    if other_room != room and len(other_people) > 0:
+                        swap_candidate = random.choice(other_people)
+                        if (other_room, swap_candidate) not in yesterday_assignments:
+                            other_people.remove(swap_candidate)
+                            other_people.append(person)
+                            new_assignment.append(swap_candidate)
+                            break
+                else:
+                    # If no swap was possible, keep the person in the same room
+                    new_assignment.append(person)
+            else:
+                new_assignment.append(person)
+        room_assignments[room] = new_assignment
 
 except gspread.exceptions.WorksheetNotFound:
-    # First day case: No previous data, so generate from scratch
+    # First day case: No previous data, so keep the current assignments
     worksheet_today = spreadsheet_emp.add_worksheet(title=arrangement_sheet_name, rows="100", cols="10")
 
 # Step 9: Write today's arrangement to the "Today's Arrangement" sheet
