@@ -3,7 +3,6 @@ import random
 import os
 import json
 import requests
-import heapq
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -49,38 +48,35 @@ for name, project in data_dict.items():
         else:
             project_groups[project].append(name)
 
+# Add Miscellaneous people as one "project" (for shuffling and random distribution)
+if misc_people:
+    project_groups['Miscellaneous'] = misc_people
+
 # Step 5: Assign rooms based on seat availability
 room_assignments = {}
 assigned_people = set()
 
-# Priority queue (smallest group assigned first)
-project_heap = []
-for project, people in project_groups.items():
-    if people:
-        heapq.heappush(project_heap, (len(people), project))
+# Shuffle the project groups randomly
+projects = list(project_groups.items())
+random.shuffle(projects)
 
+# Assign project groups to rooms in a random order
 for room, seat_count in seat_dict.items():
     room_assignments[room] = []
     remaining_seats = seat_count
 
-    while project_heap and remaining_seats > 0:
-        group_size, project = heapq.heappop(project_heap)
+    for project, people in projects:
+        if len(people) <= remaining_seats:
+            room_assignments[room].extend(people)
+            remaining_seats -= len(people)
+            assigned_people.update(people)
+            project_groups[project] = []
 
-        if group_size <= remaining_seats:
-            room_assignments[room].extend(project_groups[project])
-            remaining_seats -= group_size
-            assigned_people.update(project_groups[project])
-        else:
-            room_assignments[room].extend(project_groups[project][:remaining_seats])
-            assigned_people.update(project_groups[project][:remaining_seats])
-            project_groups[project] = project_groups[project][remaining_seats:]
-            heapq.heappush(project_heap, (len(project_groups[project]), project))
-            remaining_seats = 0
-
-# Step 6: Shuffle and assign miscellaneous people into rooms with available space
-misc_people = [person for person in misc_people if person not in assigned_people]
+# Step 6: Shuffle and assign remaining miscellaneous people
+misc_people = [person for person in project_groups['Miscellaneous'] if person not in assigned_people]
 random.shuffle(misc_people)
 
+# Randomly distribute miscellaneous people across rooms with available space
 for room, people in room_assignments.items():
     remaining_seats = seat_dict[room] - len(people)
     if remaining_seats > 0 and misc_people:
@@ -128,7 +124,7 @@ worksheet_today.update("A1", arrangement_data)
 ist_offset = timedelta(hours=5, minutes=30)
 today = (datetime.utcnow() + ist_offset).strftime("%d-%m-%Y")
 
-# Step 10: Prepare the Adaptive Card for Teams notification
+# Prepare Adaptive Card for Microsoft Teams
 adaptive_card_table = {
     "type": "AdaptiveCard",
     "body": [
@@ -184,7 +180,7 @@ adaptive_card_table = {
     ]
 }
 
-# Adding rows with room and employee names
+# Adding rows with room and employee names to the card
 for room, people in room_assignments.items():
     adaptive_card_table["body"][1]["rows"].append(
         {
@@ -206,8 +202,7 @@ for room, people in room_assignments.items():
                         {
                             "type": "TextBlock",
                             "text": ", ".join(people),
-                            "wrap": True,
-                            "horizontalAlignment": "Left"
+                            "wrap": True
                         }
                     ]
                 }
@@ -215,11 +210,8 @@ for room, people in room_assignments.items():
         }
     )
 
-# Step 11: Send Adaptive Card to Webhook
-headers = {
-    'Content-Type': 'application/json'
-}
-
+# Step 10: Send Adaptive Card to Webhook
+headers = {'Content-Type': 'application/json'}
 response = requests.post(webhook_url, headers=headers, data=json.dumps(adaptive_card_table))
 
 # Check if the request was successful
