@@ -47,7 +47,7 @@ seat_dict = {row[0]: int(row[1]) for row in seat_avail[1:] if len(row) == 2}
 # Convert exclusion data to a list of names
 exclusion_names = [entry['Name'] for entry in exclusion_list]
 
-# Step 3: Group employees by project
+# Step 2: Group employees by project
 project_groups = defaultdict(list)
 misc_people = []
 
@@ -59,61 +59,57 @@ for name, project in data_dict.items():
         else:
             project_groups[project].append(name)
 
-# Shuffle remaining misc employees for dynamic allocation
-random.shuffle(misc_people)
+# Step 3: Shuffle project groups (Merge Shuffle)
+def merge_shuffle(groups):
+    # Convert dict values (groups) to a list
+    group_list = list(groups.values())
+    
+    # Shuffle the order of groups
+    random.shuffle(group_list)
+    
+    # Flatten the shuffled list into a single list
+    shuffled_list = [person for group in group_list for person in group]
+    
+    return shuffled_list
 
-# Step 4: Initialize room allocations and outside space allocations
+shuffled_project_people = merge_shuffle(project_groups)
+random.shuffle(misc_people)  # Shuffle misc people
+
+# Step 4: Initialize room allocations
 room_allocations = {room: [] for room in seat_dict}
-outside_space_allocations = {f"{room}(Outside Space)": [] for room in seat_dict}
 
-# Randomize the room order
+# Step 5: Randomize room order and allocate people (keeping groups together)
+def allocate_groups_to_rooms(groups, room_allocations, seat_dict):
+    random.shuffle(rooms)  # Shuffle rooms to make allocation random
+    for group in groups:
+        for room in rooms:
+            capacity = seat_dict[room]
+            if len(room_allocations[room]) + len(group) <= capacity:
+                room_allocations[room].extend(group)
+                break
+
 rooms = list(seat_dict.keys())
 random.shuffle(rooms)
 
-# Function to allocate groups to rooms with random room indexing
-def allocate_group(group, room_allocations, outside_space_allocations, seat_dict):
-    random.shuffle(rooms)  # Shuffle the rooms to make the allocation order random
-    for room in rooms:
-        capacity = seat_dict[room]
-        if len(room_allocations[room]) + len(group) <= capacity:
-            room_allocations[room].extend(group)
-            return  # Group successfully allocated, exit the function
+# Step 6: Allocate shuffled project people first (keep groups together)
+allocate_groups_to_rooms(list(project_groups.values()), room_allocations, seat_dict)
 
-    # If no room has enough space, assign the group to the outside space of the first available room
-    outside_space_allocations[f"{rooms[0]}(Outside Space)"].extend(group)
+# Step 7: Allocate misc people
+def allocate_misc_to_rooms(misc_people, room_allocations, seat_dict):
+    for person in misc_people:
+        for room in rooms:
+            capacity = seat_dict[room]
+            if len(room_allocations[room]) < capacity:
+                room_allocations[room].append(person)
+                break
 
-# Step 5: Load previous allocations from Google Sheets
-def load_previous_allocations(worksheet):
-    allocations = {}
-    records = worksheet.get_all_records()
-    for record in records:
-        room = record.get("Room No.")
-        names = record.get("Names", "")
-        allocations[room] = names.split(", ") if names else []
-    return allocations
+allocate_misc_to_rooms(misc_people, room_allocations, seat_dict)
 
-# Step 6: Shuffle groups based on historical data
-def shuffle_groups_with_history(project_groups, previous_allocations):
-    shuffled_groups = []
-    
-    # Create a list of all groups
-    all_groups = list(project_groups.values())
-    
-    # Shuffle groups
-    random.shuffle(all_groups)
-
-    # Check against previous allocations to avoid repeats
-    for group in all_groups:
-        if not any(set(group).issubset(set(previous)) for previous in previous_allocations.values()):
-            shuffled_groups.append(group)
-
-    return shuffled_groups
-
-# Step 7: Write the allocations to Google Sheets
+# Step 8: Write the allocations to Google Sheets
 def write_allocations_to_sheet(worksheet, allocation):
     # Prepare data for writing
     allocation_data = []
-    for room_name, people in allocation['rooms'].items():
+    for room_name, people in allocation.items():
         allocation_data.append([room_name, ', '.join(people)])
 
     # Append data to the worksheet
@@ -123,54 +119,14 @@ def write_allocations_to_sheet(worksheet, allocation):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     worksheet.append_row(["Timestamp", timestamp])
 
-# Step 8: Allocate groups to rooms with consideration of previous allocations
-def allocate_groups_to_rooms(project_groups, misc_people, seat_dict, previous_allocations):
-    room_allocations = {room: [] for room in seat_dict}
-    outside_space_allocations = {f"{room}(Outside Space)": [] for room in seat_dict}
+# Combine room allocations
+allocation = room_allocations
 
-    rooms = list(seat_dict.keys())
-    random.shuffle(rooms)
-
-    # Allocate project groups
-    for group in project_groups:
-        allocate_group(group, room_allocations, outside_space_allocations, seat_dict)
-
-    # Allocate remaining misc employees to rooms
-    for room in rooms:
-        capacity = seat_dict[room]
-        while len(room_allocations[room]) < capacity and misc_people:
-            room_allocations[room].append(misc_people.pop())
-
-    # Handle leftover misc employees by placing them in outside spaces
-    if misc_people:
-        for room in rooms:
-            if misc_people:
-                outside_space_allocations[f"{room}(Outside Space)"].extend(misc_people)
-                misc_people = []
-
-    return {
-        "rooms": room_allocations,
-        "outside_spaces": outside_space_allocations
-    }
-
-# Step 9: Main Execution Logic
-
-# Ensure the "Group_Allocations" worksheet exists or create it
+# Write the allocations back to the Google Sheet
 allocation_worksheet = get_or_create_worksheet(spreadsheet_emp, "Group_Allocations")
-
-# Load previous allocations
-previous_allocations = load_previous_allocations(allocation_worksheet)
-
-# Shuffle project groups based on previous allocations
-shuffled_project_groups = shuffle_groups_with_history(project_groups, previous_allocations)
-
-# Allocate groups to rooms
-allocation = allocate_groups_to_rooms(shuffled_project_groups, misc_people, seat_dict, previous_allocations)
-
-# Write the new allocations back to Google Sheets
 write_allocations_to_sheet(allocation_worksheet, allocation)
 
-# Send the Adaptive Card to Webhook (Optional - for MS Teams)
+ #Send the Adaptive Card to Webhook (Optional - for MS Teams)
 adaptive_card_table = {
     "type": "AdaptiveCard",
     "body": [
@@ -205,7 +161,7 @@ adaptive_card_table = {
 }
 
 # Add room allocations to the adaptive card
-for room, people in allocation["rooms"].items():
+for room, people in allocation.items():
     adaptive_card_table["body"][1]["rows"].append(
         {
             "type": "TableRow",
